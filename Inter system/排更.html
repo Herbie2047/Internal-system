@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>楓木學堂 (Maple Education) 雙層智能排班系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+        }
+        .drag-over {
+            background-color: #e0e7ff !important;
+            border: 2px dashed #4f46e5 !important;
+        }
+        .draggable-teacher {
+            cursor: grab;
+            user-select: none;
+        }
+        .draggable-teacher:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
+
+    <!-- Header -->
+    <header class="bg-indigo-600 text-white shadow-md mb-6">
+        <div class="max-w-[95%] mx-auto px-4 py-4 flex flex-wrap justify-between items-center gap-4">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold flex items-center gap-2">
+                    <span>🍁</span> 楓木學堂 (Maple Education) Working Schedule
+                </h1>
+                <p class="text-indigo-200 text-sm mt-1">1. 拖放快速安排人手 ➔ 2. 點擊日子微調當日細節時段 (支援薪酬及車資計算)</p>
+            </div>
+            
+            <div class="flex items-center gap-2 flex-wrap">
+                <!-- Undo / Redo Controls -->
+                <div class="flex items-center bg-indigo-700/80 rounded-lg p-1 border border-indigo-400/40">
+                    <button id="undoBtn" onclick="undo()" disabled class="px-2.5 py-1 text-xs font-bold rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent transition flex items-center gap-1">
+                        ↩️ Undo <span class="text-[10px] opacity-60">(Ctrl+Z)</span>
+                    </button>
+                    <button id="redoBtn" onclick="redo()" disabled class="px-2.5 py-1 text-xs font-bold rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent transition flex items-center gap-1">
+                        ↪️ Redo <span class="text-[10px] opacity-60">(Ctrl+Y)</span>
+                    </button>
+                </div>
+
+                <button onclick="openStaffWhatsAppModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-lg transition shadow flex items-center gap-1">
+                    💬 按員工發送 WhatsApp 通知
+                </button>
+                <button onclick="resetSystemData()" class="bg-rose-500 hover:bg-rose-700 text-white text-xs font-bold px-3 py-2 rounded-lg transition shadow">
+                    ⚠️ 重置系統
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[95%] mx-auto px-2 grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+        <!-- 左側：導師資料庫 & 新增/編輯 (1 Col) -->
+        <section class="lg:col-span-1 space-y-6">
+            
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 sticky top-4">
+                <h2 class="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <span class="text-indigo-600">👤</span> 導師資料庫
+                </h2>
+                <p class="text-xs text-slate-400 mb-3">💡 **直接拖放**導師卡片至右邊月曆即可速排。</p>
+                
+                <div id="teacherDock" class="space-y-2 max-h-60 overflow-y-auto p-1 bg-slate-50 rounded-lg border border-slate-200 mb-5">
+                    <!-- 動態渲染導師卡片 -->
+                </div>
+
+                <!-- 新增 / 編輯導師 Form -->
+                <form id="teacherForm" class="space-y-3 pt-3 border-t border-slate-200">
+                    <div class="flex justify-between items-center">
+                        <h3 id="formTitle" class="text-xs font-bold text-slate-600 uppercase">＋ 新增導師至資料庫</h3>
+                        <button type="button" id="cancelEditBtn" onclick="cancelEditTeacher()" class="hidden text-[11px] text-rose-500 hover:underline">取消編輯</button>
+                    </div>
+                    
+                    <!-- 隱藏欄位用作記錄正在編輯的導師舊姓名 -->
+                    <input type="hidden" id="editingTeacherOriginalName" value="">
+
+                    <div>
+                        <input type="text" id="teacherName" placeholder="導師姓名 (例: Mary)" required
+                            class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    </div>
+
+                    <div>
+                        <input type="text" id="teacherRole" placeholder="預設工作/班別 (例: 功課班)" value="功課班" required
+                            class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500">時薪 ($/hr)</label>
+                            <input type="number" id="hourlyRate" placeholder="例: 100" value="100" min="0" required class="w-full px-2 py-1 border border-slate-300 rounded text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500">每日車資津貼 ($/日)</label>
+                            <input type="number" id="transportFee" placeholder="例: 20" value="0" min="0" required class="w-full px-2 py-1 border border-slate-300 rounded text-xs">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500">預設開始時間</label>
+                            <input type="time" id="startTime" value="16:00" required class="w-full px-2 py-1 border border-slate-300 rounded text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-500">預設結束時間</label>
+                            <input type="time" id="endTime" value="20:00" required class="w-full px-2 py-1 border border-slate-300 rounded text-xs">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-semibold text-slate-500 mb-1">代表顏色</label>
+                        <input type="color" id="teacherColor" value="#1e3a8a" class="h-7 w-full border border-slate-300 rounded cursor-pointer">
+                    </div>
+
+                    <button type="submit" id="submitTeacherBtn"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-xs transition shadow">
+                        新增至資料庫
+                    </button>
+                </form>
+            </div>
+
+        </section>
+
+        <!-- 右側：月份選擇與大月曆 (3 Cols) -->
+        <section class="lg:col-span-3 space-y-6">
+
+            <!-- 月份選擇 -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <label class="text-sm font-bold text-slate-700">🗓️ 排班月份：</label>
+                    <input type="month" id="scheduleMonth" onchange="changeMonth()" 
+                        class="px-3 py-1.5 border border-indigo-300 rounded-lg text-sm font-bold text-indigo-700 bg-indigo-50 focus:outline-none shadow-inner">
+                </div>
+                <div class="text-xs text-slate-500 font-medium">
+                    🔍 點擊月曆上的任何一日，即可打開 **30 分鐘 Timetable 微調當日詳細時段/轉班**。
+                </div>
+            </div>
+
+            <!-- 月曆視圖 -->
+            <div id="calendarContainer" class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <!-- 動態加載大月曆 -->
+            </div>
+
+            <!-- 💰 當月薪酬與車資總計統計表 (Payroll Summary) -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <h3 class="text-md font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    <span class="text-emerald-600">💵</span> 當月導師薪酬與車資結算表 (Payroll Summary)
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse text-xs text-left">
+                        <thead>
+                            <tr class="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+                                <th class="p-2">導師姓名</th>
+                                <th class="p-2">時薪 ($/hr)</th>
+                                <th class="p-2">車資津貼 ($/日)</th>
+                                <th class="p-2">當月出勤天數</th>
+                                <th class="p-2">總工時 (小時)</th>
+                                <th class="p-2">基本薪金 ($)</th>
+                                <th class="p-2">總車資津貼 ($)</th>
+                                <th class="p-2 text-indigo-700 font-extrabold">應付總額 ($)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payrollTableBody" class="divide-y divide-slate-100">
+                            <!-- 動態加載薪酬數據 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Modal 1: 每日 Timetable 與 Minor Schedule 微調區 -->
+    <div id="timetableModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full p-6 border border-slate-200 space-y-4 max-h-[92vh] flex flex-col">
+            
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3 shrink-0">
+                <div>
+                    <h3 class="text-xl font-bold text-slate-800" id="modalTitle">📅 每日時間表 (Timetable)</h3>
+                    <p class="text-xs text-slate-400">10:00 AM - 08:00 PM (每 30 分鐘一格)，頂部名單捲動時置頂固定</p>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 font-bold text-2xl">✕</button>
+            </div>
+
+            <!-- Timetable 視圖區 (加入 Sticky Header 功能) -->
+            <div class="overflow-y-auto max-h-[45vh] border border-slate-200 rounded-xl bg-slate-50 relative shrink-0">
+                <div id="timetableGridContainer">
+                    <!-- 動態渲染 30 分鐘 Timetable -->
+                </div>
+            </div>
+
+            <!-- 當日 Minor Schedule 控制台 (新增/分拆時段) -->
+            <div class="bg-indigo-50/60 border border-indigo-100 p-3 rounded-xl shrink-0 space-y-2">
+                <h4 class="text-xs font-bold text-indigo-900 flex items-center gap-1">
+                    <span>⚡</span> 當日導師時段微調 (新增/轉班/專科時段)
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500">選擇導師</label>
+                        <select id="minorTeacherSelect" class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs bg-white">
+                            <!-- 動態填入當日已排班導師 -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500">班別/工作內容</label>
+                        <input type="text" id="minorRole" placeholder="例: p5 math" class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500">開始時間</label>
+                        <input type="time" id="minorStart" value="16:30" class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500">結束時間</label>
+                        <input type="time" id="minorEnd" value="18:00" class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs bg-white">
+                    </div>
+                    <button onclick="addMinorShift()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded text-xs transition shadow">
+                        ⚡ 加入轉班/專科
+                    </button>
+                </div>
+            </div>
+
+            <!-- 當日特別備註 & 底部按鈕 -->
+            <div class="border-t border-slate-100 pt-2 shrink-0 space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">📝 當日特別備註</label>
+                    <input type="text" id="modalDayNote" placeholder="例如：今日有 Mock Exam，請導師提早 15 分鐘到達..." 
+                        class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+
+                <div class="flex justify-end gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold">關閉</button>
+                    <button onclick="saveModalChanges()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow">保存修改</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Modal 2: 按員工獨立生成 WhatsApp 通知的彈窗 -->
+    <div id="staffWhatsAppModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="text-lg font-bold text-slate-800">💬 按獨立員工生成 WhatsApp 通知</h3>
+                <button onclick="closeStaffModal()" class="text-slate-400 hover:text-slate-600 font-bold text-xl">✕</button>
+            </div>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">1. 選擇員工 (Staff)</label>
+                    <select id="staffSelect" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-white font-bold text-slate-700">
+                        <!-- 動態加入員工 -->
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">2. 訊息預覽</label>
+                    <textarea id="staffWhatsAppPreview" rows="8" readonly class="w-full border border-slate-200 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-800 leading-relaxed focus:outline-none"></textarea>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center pt-2 border-t border-slate-100">
+                <button onclick="generateStaffWhatsAppMessage()" class="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 text-xs font-bold px-3 py-2 rounded-lg">
+                    🔄 重新生成
+                </button>
+                <button onclick="copyStaffWhatsAppMessage()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg shadow flex items-center gap-1">
+                    📋 複製 WhatsApp 訊息
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 全局數據與 Undo/Redo History 結構 ---
+        let teachers = JSON.parse(localStorage.getItem('teachers_v10')) || [];
+        let schedules = JSON.parse(localStorage.getItem('schedules_v10')) || {};
+
+        let undoStack = [];
+        let redoStack = [];
+        const MAX_HISTORY = 30;
+
+        const weekdayNames = ['日', '一', '二', '三', '四', '五', '六'];
+        const presetColors = ['#1e3a8a', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#2563eb'];
+        let activeDateStr = null;
+        let draggedTeacherName = null;
+
+        function lightenColor(hex, percent = 80) {
+            let num = parseInt(hex.replace('#', ''), 16),
+                amt = Math.round(2.55 * percent),
+                R = (num >> 16) + amt,
+                G = (num >> 8 & 0x00FF) + amt,
+                B = (num & 0x0000FF) + amt;
+            return '#' + (0x1000000 + (R<255?R<1?0:R:255)*0x10000 + (G<255?G<1?0:G:255)*0x100 + (B<255?B<1?0:B:255)).toString(16).slice(1);
+        }
+
+        function getNextMonthString() {
+            const today = new Date();
+            const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+            return `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        window.onload = function() {
+            document.getElementById('scheduleMonth').value = getNextMonthString();
+            renderTeachers();
+            renderCalendar();
+            renderPayrollTable();
+            saveStateToHistory(false);
+        };
+
+        // --- Undo / Redo 核心引擎 ---
+        function saveStateToHistory(clearRedo = true) {
+            const state = JSON.stringify({ teachers, schedules });
+            if (undoStack.length > 0 && undoStack[undoStack.length - 1] === state) return;
+
+            undoStack.push(state);
+            if (undoStack.length > MAX_HISTORY) undoStack.shift();
+            if (clearRedo) redoStack = [];
+
+            updateUndoRedoUI();
+        }
+
+        function undo() {
+            if (undoStack.length <= 1) return;
+
+            const currentState = undoStack.pop();
+            redoStack.push(currentState);
+
+            const previousState = JSON.parse(undoStack[undoStack.length - 1]);
+            teachers = previousState.teachers;
+            schedules = previousState.schedules;
+
+            saveData(false);
+            refreshUI();
+        }
+
+        function redo() {
+            if (redoStack.length === 0) return;
+
+            const nextState = redoStack.pop();
+            undoStack.push(nextState);
+
+            const stateObj = JSON.parse(nextState);
+            teachers = stateObj.teachers;
+            schedules = stateObj.schedules;
+
+            saveData(false);
+            refreshUI();
+        }
+
+        function updateUndoRedoUI() {
+            document.getElementById('undoBtn').disabled = undoStack.length <= 1;
+            document.getElementById('redoBtn').disabled = redoStack.length === 0;
+        }
+
+        function refreshUI() {
+            renderTeachers();
+            renderCalendar();
+            renderPayrollTable();
+            if (activeDateStr) {
+                const monthVal = document.getElementById('scheduleMonth').value;
+                const dayData = (schedules[monthVal] && schedules[monthVal][activeDateStr]) ? schedules[monthVal][activeDateStr] : { shifts: [] };
+                updateMinorTeacherDropdown(dayData.shifts);
+                renderTimetableGrid(dayData.shifts);
+            }
+            updateUndoRedoUI();
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                if (e.shiftKey) {
+                    e.preventDefault();
+                    redo();
+                } else {
+                    e.preventDefault();
+                    undo();
+                }
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                e.preventDefault();
+                redo();
+            }
+        });
+
+        function saveData(recordHistory = true) {
+            localStorage.setItem('teachers_v10', JSON.stringify(teachers));
+            localStorage.setItem('schedules_v10', JSON.stringify(schedules));
+            if (recordHistory) {
+                saveStateToHistory(true);
+            }
+        }
+
+        function resetSystemData() {
+            if (confirm("⚠️ 確定要重置所有數據？")) {
+                if (prompt("請輸入 'RESET' 以確認清除：") === 'RESET') {
+                    localStorage.clear();
+                    location.reload();
+                }
+            }
+        }
+
+        function getMinutes(timeStr) {
+            const [h, m] = timeStr.split(':').map(Number);
+            return h * 60 + m;
+        }
+
+        // --- 1. 導師資料庫 (新增 / 編輯導師資料) ---
+        document.getElementById('teacherForm').onsubmit = function(e) {
+            e.preventDefault();
+            const originalName = document.getElementById('editingTeacherOriginalName').value;
+            const name = document.getElementById('teacherName').value.trim();
+            const role = document.getElementById('teacherRole').value.trim();
+            const hourlyRate = parseFloat(document.getElementById('hourlyRate').value) || 0;
+            const transportFee = parseFloat(document.getElementById('transportFee').value) || 0;
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+            const color = document.getElementById('teacherColor').value;
+
+            const teacherObj = { name, role, hourlyRate, transportFee, startTime, endTime, color };
+
+            if (originalName) {
+                // 編輯現有導師
+                const idx = teachers.findIndex(t => t.name === originalName);
+                if (idx >= 0) {
+                    teachers[idx] = teacherObj;
+                }
+
+                // 如果修改了導師名字，同步更新已有排班記錄中的名字及顏色
+                if (originalName !== name) {
+                    Object.keys(schedules).forEach(monthKey => {
+                        Object.keys(schedules[monthKey]).forEach(dateKey => {
+                            if (schedules[monthKey][dateKey].shifts) {
+                                schedules[monthKey][dateKey].shifts.forEach(shift => {
+                                    if (shift.teacherName === originalName) {
+                                        shift.teacherName = name;
+                                        shift.color = color;
+                                    }
+                                });
+                            }
+                        });
+                    });
+                } else {
+                    // 名字沒變但顏色更新時，同步顏色
+                    Object.keys(schedules).forEach(monthKey => {
+                        Object.keys(schedules[monthKey]).forEach(dateKey => {
+                            if (schedules[monthKey][dateKey].shifts) {
+                                schedules[monthKey][dateKey].shifts.forEach(shift => {
+                                    if (shift.teacherName === name) {
+                                        shift.color = color;
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
+            } else {
+                // 新增導師
+                const idx = teachers.findIndex(t => t.name === name);
+                if (idx >= 0) teachers[idx] = teacherObj;
+                else teachers.push(teacherObj);
+            }
+
+            saveData(true);
+            renderTeachers();
+            renderCalendar();
+            renderPayrollTable();
+            cancelEditTeacher();
+        };
+
+        function editTeacher(name) {
+            const t = teachers.find(item => item.name === name);
+            if (!t) return;
+
+            document.getElementById('editingTeacherOriginalName').value = t.name;
+            document.getElementById('teacherName').value = t.name;
+            document.getElementById('teacherRole').value = t.role || '';
+            document.getElementById('hourlyRate').value = t.hourlyRate || 0;
+            document.getElementById('transportFee').value = t.transportFee || 0;
+            document.getElementById('startTime').value = t.startTime || '16:00';
+            document.getElementById('endTime').value = t.endTime || '20:00';
+            document.getElementById('teacherColor').value = t.color || '#1e3a8a';
+
+            document.getElementById('formTitle').innerText = '✏️ 編輯導師資料';
+            document.getElementById('submitTeacherBtn').innerText = '儲存修改';
+            document.getElementById('submitTeacherBtn').classList.replace('bg-indigo-600', 'bg-amber-600');
+            document.getElementById('submitTeacherBtn').classList.replace('hover:bg-indigo-700', 'hover:bg-amber-700');
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+        }
+
+        function cancelEditTeacher() {
+            document.getElementById('teacherForm').reset();
+            document.getElementById('editingTeacherOriginalName').value = '';
+            document.getElementById('formTitle').innerText = '＋ 新增導師至資料庫';
+            document.getElementById('submitTeacherBtn').innerText = '新增至資料庫';
+            document.getElementById('submitTeacherBtn').classList.replace('bg-amber-600', 'bg-indigo-600');
+            document.getElementById('submitTeacherBtn').classList.replace('hover:bg-amber-700', 'hover:bg-indigo-700');
+            document.getElementById('cancelEditBtn').classList.add('hidden');
+            document.getElementById('teacherColor').value = presetColors[teachers.length % presetColors.length];
+        }
+
+        function deleteTeacher(name) {
+            if (!confirm(`確定要刪除導師 「${name}」 嗎？`)) return;
+            teachers = teachers.filter(t => t.name !== name);
+            saveData(true);
+            renderTeachers();
+            renderCalendar();
+            renderPayrollTable();
+        }
+
+        function renderTeachers() {
+            const dock = document.getElementById('teacherDock');
+            if (teachers.length === 0) {
+                dock.innerHTML = `<p class="text-xs text-slate-400 p-2 text-center">暫無導師，請喺下方新增。</p>`;
+                return;
+            }
+
+            dock.innerHTML = teachers.map(t => `
+                <div draggable="true" ondragstart="handleDragStart(event, '${t.name}')"
+                     class="draggable-teacher flex items-center justify-between bg-white p-2 rounded border border-slate-200 text-xs shadow-xs hover:border-indigo-400 transition">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full shrink-0" style="background-color: ${t.color}"></span>
+                        <div>
+                            <span class="font-bold text-slate-800">${t.name}</span>
+                            <span class="text-[10px] text-slate-400 block">$${t.hourlyRate}/hr | 車資: $${t.transportFee}/日 | ${t.startTime}-${t.endTime}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="editTeacher('${t.name}')" class="text-amber-500 hover:text-amber-700 font-bold text-xs px-1" title="編輯">✏️</button>
+                        <button onclick="deleteTeacher('${t.name}')" class="text-rose-400 hover:text-rose-600 font-bold text-xs px-1" title="刪除">✕</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // --- 2. 第一層：Drag & Drop 月曆速排 ---
+        function handleDragStart(e, teacherName) {
+            draggedTeacherName = teacherName;
+            e.dataTransfer.setData('text/plain', teacherName);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.currentTarget.classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('drag-over');
+        }
+
+        function handleDrop(e, dateStr) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('drag-over');
+
+            if (!draggedTeacherName) return;
+            const tObj = teachers.find(t => t.name === draggedTeacherName);
+            if (!tObj) return;
+
+            const currentMonth = document.getElementById('scheduleMonth').value;
+            if (!schedules[currentMonth]) schedules[currentMonth] = {};
+            if (!schedules[currentMonth][dateStr]) schedules[currentMonth][dateStr] = { note: "", shifts: [] };
+
+            schedules[currentMonth][dateStr].shifts.push({
+                teacherName: tObj.name,
+                startTime: tObj.startTime,
+                endTime: tObj.endTime,
+                detail: tObj.role,
+                color: tObj.color,
+                isOverlay: false
+            });
+
+            saveData(true);
+            renderCalendar();
+            renderPayrollTable();
+            draggedTeacherName = null;
+        }
+
+        // --- 3. 大月曆渲染 ---
+        function changeMonth() {
+            renderCalendar();
+            renderPayrollTable();
+        }
+
+        function renderCalendar() {
+            const container = document.getElementById('calendarContainer');
+            const monthVal = document.getElementById('scheduleMonth').value;
+            if (!monthVal) return;
+
+            const [year, month] = monthVal.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
+
+            const monthData = schedules[monthVal] || {};
+
+            let html = `
+                <div class="border border-slate-300 rounded-xl overflow-hidden shadow-sm bg-white">
+                    <div class="calendar-grid bg-indigo-100 border-b border-slate-300 text-center font-bold text-xs text-indigo-900 py-2.5">
+                        <div class="text-rose-600">日</div>
+                        <div>一</div><div>二</div><div>三</div><div>四</div><div>五</div>
+                        <div class="text-amber-700">六</div>
+                    </div>
+                    <div class="calendar-grid bg-slate-200 gap-px">
+            `;
+
+            for (let i = 0; i < firstDayOfWeek; i++) {
+                html += `<div class="bg-slate-50/50 min-h-[140px] opacity-30"></div>`;
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateObj = new Date(year, month - 1, day);
+                const dayOfWeek = dateObj.getDay();
+                const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+                const dayData = monthData[dateStr] || { note: "", shifts: [] };
+
+                html += `
+                    <div ondragover="handleDragOver(event)" 
+                         ondragleave="handleDragLeave(event)" 
+                         ondrop="handleDrop(event, '${dateStr}')"
+                         onclick="openTimetableModal('${dateStr}')"
+                         class="bg-white min-h-[140px] p-2 flex flex-col justify-between hover:bg-indigo-50/30 transition cursor-pointer group">
+                        <div>
+                            <div class="flex justify-between items-center mb-1 pb-1 border-b border-slate-100">
+                                <span class="text-xs font-extrabold ${isWeekend ? 'text-amber-600' : 'text-slate-700'}">${day}日</span>
+                                <span class="text-[9px] text-indigo-600 opacity-0 group-hover:opacity-100 font-bold">🔍 微調 Timetable</span>
+                            </div>
+
+                            <div class="space-y-1">
+                `;
+
+                if (dayData.shifts && dayData.shifts.length > 0) {
+                    dayData.shifts.forEach((s) => {
+                        const baseColor = s.color || '#1e3a8a';
+                        const bgColor = s.isOverlay ? lightenColor(baseColor, 70) : baseColor;
+                        const textColor = s.isOverlay ? baseColor : '#ffffff';
+                        const borderStyle = s.isOverlay ? `border: 1.5px solid ${baseColor};` : '';
+
+                        html += `
+                            <div class="text-[10px] p-1 rounded shadow-xs font-medium leading-tight flex justify-between items-center" 
+                                 style="background-color: ${bgColor}; color: ${textColor}; ${borderStyle}">
+                                <span class="font-bold truncate">${s.isOverlay ? '⚡ ' : ''}${s.teacherName} (${s.detail})</span>
+                                <span class="opacity-80 shrink-0 text-[9px]">${s.startTime}-${s.endTime}</span>
+                            </div>
+                        `;
+                    });
+                } else {
+                    html += `<span class="text-[10px] text-slate-300 italic block py-2 text-center">拖拉導師至此</span>`;
+                }
+
+                html += `</div></div>`;
+
+                if (dayData.note) {
+                    html += `<div class="mt-1 text-[9px] bg-amber-50 text-amber-900 p-0.5 rounded border border-amber-200 truncate">📝 ${dayData.note}</div>`;
+                }
+
+                html += `</div>`;
+            }
+
+            html += `</div></div>`;
+            container.innerHTML = html;
+        }
+
+        // --- 4. 薪酬計算與 Summary 表格 (Payroll Calculation Engine) ---
+        function renderPayrollTable() {
+            const monthVal = document.getElementById('scheduleMonth').value;
+            const tbody = document.getElementById('payrollTableBody');
+            const monthData = schedules[monthVal] || {};
+
+            if (teachers.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-slate-400">尚無導師資料。</td></tr>`;
+                return;
+            }
+
+            let html = '';
+
+            teachers.forEach(t => {
+                let totalMinutes = 0;
+                let daysWorked = 0;
+
+                Object.keys(monthData).forEach(dateStr => {
+                    const dayObj = monthData[dateStr];
+                    if (dayObj && dayObj.shifts) {
+                        const tShifts = dayObj.shifts.filter(s => s.teacherName === t.name);
+                        if (tShifts.length > 0) {
+                            daysWorked++;
+                            tShifts.forEach(s => {
+                                const startMin = getMinutes(s.startTime);
+                                const endMin = getMinutes(s.endTime);
+                                if (endMin > startMin) {
+                                    totalMinutes += (endMin - startMin);
+                                }
+                            });
+                        }
+                    }
+                });
+
+                const totalHours = totalMinutes / 60;
+                const baseSalary = totalHours * (t.hourlyRate || 0);
+                const totalTransport = daysWorked * (t.transportFee || 0);
+                const grandTotal = baseSalary + totalTransport;
+
+                html += `
+                    <tr class="hover:bg-slate-50">
+                        <td class="p-2 font-bold text-slate-800">${t.name}</td>
+                        <td class="p-2">$${t.hourlyRate || 0}</td>
+                        <td class="p-2">$${t.transportFee || 0}</td>
+                        <td class="p-2 font-semibold text-slate-700">${daysWorked} 日</td>
+                        <td class="p-2 font-semibold text-slate-700">${totalHours.toFixed(1)} hrs</td>
+                        <td class="p-2 font-semibold text-slate-700">$${baseSalary.toFixed(1)}</td>
+                        <td class="p-2 font-semibold text-slate-700">$${totalTransport.toFixed(1)}</td>
+                        <td class="p-2 font-extrabold text-indigo-600 text-sm">$${grandTotal.toFixed(1)}</td>
+                    </tr>
+                `;
+            });
+
+            tbody.innerHTML = html;
+        }
+
+        // --- 5. 第二層：30 分鐘 Timetable Modal ---
+        function openTimetableModal(dateStr) {
+            activeDateStr = dateStr;
+            const monthVal = document.getElementById('scheduleMonth').value;
+            const monthData = schedules[monthVal] || {};
+            const dayData = monthData[dateStr] || { note: "", shifts: [] };
+
+            const dateObj = new Date(dateStr);
+            document.getElementById('modalTitle').innerText = `${dateStr} (星期${weekdayNames[dateObj.getDay()]}) - Timetable`;
+            document.getElementById('modalDayNote').value = dayData.note || '';
+
+            updateMinorTeacherDropdown(dayData.shifts);
+            renderTimetableGrid(dayData.shifts);
+            document.getElementById('timetableModal').classList.remove('hidden');
+        }
+
+        function updateMinorTeacherDropdown(shifts) {
+            const select = document.getElementById('minorTeacherSelect');
+            if (!shifts || shifts.length === 0) {
+                select.innerHTML = `<option value="">(無導師)</option>`;
+                return;
+            }
+            const uniqueTeachers = [...new Set(shifts.map(s => s.teacherName))];
+            select.innerHTML = uniqueTeachers.map(t => `<option value="${t}">${t}</option>`).join('');
+        }
+
+        function closeModal() {
+            document.getElementById('timetableModal').classList.add('hidden');
+            activeDateStr = null;
+        }
+
+        function renderTimetableGrid(shifts) {
+            const container = document.getElementById('timetableGridContainer');
+            if (!shifts || shifts.length === 0) {
+                container.innerHTML = `<p class="text-xs text-slate-400 py-12 text-center">當日暫無導師排班。可以直接由左邊拖拉導師卡片入嚟。</p>`;
+                return;
+            }
+
+            const uniqueTeachers = [...new Set(shifts.map(s => s.teacherName))];
+
+            let timeSlots = [];
+            for (let hour = 10; hour < 20; hour++) {
+                timeSlots.push(`${String(hour).padStart(2, '0')}:00`);
+                timeSlots.push(`${String(hour).padStart(2, '0')}:30`);
+            }
+
+            let html = `
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse bg-white text-xs">
+                        <thead class="sticky top-0 z-20 shadow-xs">
+                            <tr class="bg-slate-200 text-slate-800 border-b border-slate-300">
+                                <th class="p-2 border-r border-slate-300 w-28 text-center font-extrabold bg-slate-200 sticky left-0 z-30">時間段</th>
+            `;
+
+            uniqueTeachers.forEach((tName) => {
+                const tColor = shifts.find(s => s.teacherName === tName)?.color || '#1e3a8a';
+                html += `
+                    <th class="p-2 border-r border-slate-300 text-center font-bold min-w-[180px] bg-slate-100" style="color: ${tColor}">
+                        👤 ${tName}
+                    </th>
+                `;
+            });
+
+            html += `</tr></thead><tbody>`;
+
+            timeSlots.forEach(slot => {
+                const slotMinutes = getMinutes(slot);
+
+                html += `<tr class="border-b border-slate-200 hover:bg-slate-50">`;
+                html += `<td class="p-1.5 border-r border-slate-300 font-bold text-slate-500 text-center bg-slate-100/80 sticky left-0 z-10">${slot}</td>`;
+
+                uniqueTeachers.forEach(tName => {
+                    const matchingShifts = shifts.filter(s => {
+                        if (s.teacherName !== tName) return false;
+                        const startMin = getMinutes(s.startTime);
+                        const endMin = getMinutes(s.endTime);
+                        return slotMinutes >= startMin && slotMinutes < endMin;
+                    });
+
+                    if (matchingShifts.length > 0) {
+                        matchingShifts.sort((a, b) => {
+                            const durationA = getMinutes(a.endTime) - getMinutes(a.startTime);
+                            const durationB = getMinutes(b.endTime) - getMinutes(b.startTime);
+                            return durationA - durationB;
+                        });
+
+                        const activeShift = matchingShifts[0];
+                        const baseColor = activeShift.color || '#1e3a8a';
+
+                        if (activeShift.isOverlay) {
+                            const lightBg = lightenColor(baseColor, 75);
+                            html += `
+                                <td class="p-1 border-r border-slate-200 text-center font-bold text-[10px] shadow-xs"
+                                    style="background-color: ${lightBg}; color: ${baseColor}; border-top: 2px solid ${baseColor}; border-bottom: 2px solid ${baseColor};">
+                                    ⚡ [轉班/專科] ${activeShift.detail} (${activeShift.startTime}-${activeShift.endTime})
+                                </td>
+                            `;
+                        } else {
+                            html += `
+                                <td class="p-1 border-r border-slate-200 text-center text-white font-semibold text-[10px]" style="background-color: ${baseColor}">
+                                    ■ ${activeShift.detail} (${activeShift.startTime}-${activeShift.endTime})
+                                </td>
+                            `;
+                        }
+                    } else {
+                        html += `<td class="p-1 border-r border-slate-200"></td>`;
+                    }
+                });
+
+                html += `</tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+
+            html += `<div class="mt-3 p-3 bg-white border-t border-slate-200"><p class="text-xs font-bold text-slate-700 mb-1.5">🗑️ 已加入之當日 Shift 條目：</p><div class="flex flex-wrap gap-2">`;
+            shifts.forEach((s, idx) => {
+                const baseColor = s.color || '#1e3a8a';
+                const lightBg = s.isOverlay ? lightenColor(baseColor, 80) : '#f1f5f9';
+                const textColor = s.isOverlay ? baseColor : '#334155';
+                const border = s.isOverlay ? `1px solid ${baseColor}` : '1px solid #cbd5e1';
+
+                html += `
+                    <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-medium" style="background-color: ${lightBg}; color: ${textColor}; border: ${border}">
+                        ${s.isOverlay ? '⚡' : ''} <b>${s.teacherName}</b>: ${s.startTime}-${s.endTime} (${s.detail})
+                        <button onclick="removeShiftFromTimetable(${idx})" class="text-rose-500 font-bold hover:text-rose-700 ml-1">✕</button>
+                    </span>
+                `;
+            });
+            html += `</div></div>`;
+
+            container.innerHTML = html;
+        }
+
+        function addMinorShift() {
+            const tName = document.getElementById('minorTeacherSelect').value;
+            const role = document.getElementById('minorRole').value.trim();
+            const start = document.getElementById('minorStart').value;
+            const end = document.getElementById('minorEnd').value;
+
+            if (!tName) {
+                alert('當日沒有排班導師！');
+                return;
+            }
+            if (!role) {
+                alert('請輸入班別/工作內容 (例如：p5 math)！');
+                return;
+            }
+
+            const monthVal = document.getElementById('scheduleMonth').value;
+            const tObj = teachers.find(t => t.name === tName) || { color: '#1e3a8a' };
+
+            schedules[monthVal][activeDateStr].shifts.push({
+                teacherName: tName,
+                startTime: start,
+                endTime: end,
+                detail: role,
+                color: tObj.color,
+                isOverlay: true 
+            });
+
+            saveData(true);
+            renderTimetableGrid(schedules[monthVal][activeDateStr].shifts);
+            renderCalendar();
+            renderPayrollTable();
+            document.getElementById('minorRole').value = '';
+        }
+
+        function removeShiftFromTimetable(shiftIdx) {
+            const monthVal = document.getElementById('scheduleMonth').value;
+            schedules[monthVal][activeDateStr].shifts.splice(shiftIdx, 1);
+            saveData(true);
+            updateMinorTeacherDropdown(schedules[monthVal][activeDateStr].shifts);
+            renderTimetableGrid(schedules[monthVal][activeDateStr].shifts);
+            renderCalendar();
+            renderPayrollTable();
+        }
+
+        function saveModalChanges() {
+            const monthVal = document.getElementById('scheduleMonth').value;
+            if (!schedules[monthVal]) schedules[monthVal] = {};
+            if (!schedules[monthVal][activeDateStr]) schedules[monthVal][activeDateStr] = { note: "", shifts: [] };
+
+            schedules[monthVal][activeDateStr].note = document.getElementById('modalDayNote').value.trim();
+
+            saveData(true);
+            renderCalendar();
+            renderPayrollTable();
+            closeModal();
+        }
+
+        // --- 6. 按獨立員工發送 WhatsApp 通知功能 ---
+        function openStaffWhatsAppModal() {
+            const select = document.getElementById('staffSelect');
+            if (teachers.length === 0) {
+                alert('請先喺資料庫新增導師！');
+                return;
+            }
+            select.innerHTML = teachers.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+            select.onchange = generateStaffWhatsAppMessage;
+            
+            generateStaffWhatsAppMessage();
+            document.getElementById('staffWhatsAppModal').classList.remove('hidden');
+        }
+
+        function closeStaffModal() {
+            document.getElementById('staffWhatsAppModal').classList.add('hidden');
+        }
+
+        function generateStaffWhatsAppMessage() {
+            const staffName = document.getElementById('staffSelect').value;
+            const monthVal = document.getElementById('scheduleMonth').value;
+            const monthData = schedules[monthVal] || {};
+
+            let staffShifts = [];
+
+            Object.keys(monthData).sort().forEach(dateStr => {
+                const dayObj = monthData[dateStr];
+                if (dayObj.shifts && dayObj.shifts.length > 0) {
+                    const matching = dayObj.shifts.filter(s => s.teacherName === staffName);
+                    if (matching.length > 0) {
+                        staffShifts.push({ dateStr, shifts: matching, note: dayObj.note });
+                    }
+                }
+            });
+
+            if (staffShifts.length === 0) {
+                document.getElementById('staffWhatsAppPreview').value = `🍁 楓木學堂\n\n👤 ${staffName} 老師，你好！\n${monthVal} 月份暫未有排班紀錄。`;
+                return;
+            }
+
+            let msg = `🍁 *楓木學堂 (Maple Education)*\n`;
+            msg += `👤 *${staffName} 老師 ${monthVal} 月份工作時間表* :\n`;
+            msg += `==================================\n\n`;
+
+            staffShifts.forEach(item => {
+                msg += `📌 *${item.dateStr}*:\n`;
+                item.shifts.forEach(s => {
+                    msg += `  • ⏰ ${s.startTime} - ${s.endTime} (${s.detail}) ${s.isOverlay ? '⚡[轉班/專科]' : ''}\n`;
+                });
+                if (item.note) msg += `  📝 備註: ${item.note}\n`;
+                msg += `\n`;
+            });
+
+            msg += `==================================\n`;
+            msg += `💬 請收到後回覆 *Confirm* 確認，如有需要調班請儘早通知 Boss，謝謝！`;
+
+            document.getElementById('staffWhatsAppPreview').value = msg;
+        }
+
+        function copyStaffWhatsAppMessage() {
+            const text = document.getElementById('staffWhatsAppPreview').value;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('已成功複製該員工之 WhatsApp 排班通告！');
+            });
+        }
+    </script>
+</body>
+</html>

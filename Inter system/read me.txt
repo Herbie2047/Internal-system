@@ -1,0 +1,2 @@
+These are very simple HTML application to let my manager complete the admin work
+faster
